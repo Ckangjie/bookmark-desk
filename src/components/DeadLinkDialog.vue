@@ -40,11 +40,27 @@ const isAllSelected = computed(
   () => displayedResults.value.length > 0 && displayedResults.value.every(r => selectedIds.value.has(r.id))
 )
 
+function stopCheck() {
+  if (abortController.value) {
+    abortController.value.abort()
+    abortController.value = null
+  }
+  isChecking.value = false
+}
+
+function resetState() {
+  stopCheck()
+  checkedCount.value = 0
+  results.value = []
+  selectedIds.value = new Set()
+  shouldShowOnlyBroken.value = true
+}
+
 watch(
   () => props.modelValue,
   (isOpen) => {
     if (!isOpen) {
-      stopCheck()
+      resetState()
     }
   }
 )
@@ -60,33 +76,24 @@ async function startCheck() {
   abortController.value = controller
 
   try {
-    await checkBookmarkList(
+    const finalResults = await checkBookmarkList(
       props.bookmarks,
       6,
       (_item, count) => {
         checkedCount.value = count
       },
       controller.signal
-    ).then((finalResults) => {
-      results.value = finalResults
-      // 默认自动全选检测出的失效项
-      const brokenIds = new Set(finalResults.filter(r => r.isBroken).map(r => r.id))
-      selectedIds.value = brokenIds
-    })
+    )
+    results.value = finalResults
+    // 默认自动全选检测出的失效项
+    const brokenIds = new Set(finalResults.filter(r => r.isBroken).map(r => r.id))
+    selectedIds.value = brokenIds
   } catch {
     ElMessage.error('排查过程发生异常')
   } finally {
     isChecking.value = false
     abortController.value = null
   }
-}
-
-function stopCheck() {
-  if (abortController.value) {
-    abortController.value.abort()
-    abortController.value = null
-  }
-  isChecking.value = false
 }
 
 function toggleSelect(id: string, isChecked: boolean) {
@@ -150,6 +157,7 @@ function handleDeleteSelected() {
     :close-on-click-modal="false"
     :close-on-press-escape="!isChecking"
     :show-close="!isChecking"
+    @closed="resetState"
     @update:model-value="(val: boolean) => emit('update:modelValue', val)"
   >
     <div class="deadlink-panel space-y-4">
