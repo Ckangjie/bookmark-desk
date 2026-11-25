@@ -4,7 +4,7 @@ import { CircleCheck, Collection, CopyDocument, Delete, Download, Link, Search, 
 import { ElMessage } from 'element-plus'
 import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import { liveQuery } from 'dexie'
-import { changeBookmarks, deleteBookmarks, getAllBookmarks, importBookmarks, queryBookmarks, type Bookmark, type Sort } from './bookmarks'
+import { changeBookmarks, cleanupDeletedUrls, deleteBookmarks, getAllBookmarks, importBookmarks, queryBookmarks, type Bookmark, type Sort } from './bookmarks'
 import DuplicateDialog from './components/DuplicateDialog.vue'
 import DeadLinkDialog from './components/DeadLinkDialog.vue'
 
@@ -160,6 +160,18 @@ function sync() {
     const { added, unsupported } = await importBookmarks(await chrome.bookmarks.getTree())
     const skipped = unsupported ? `，跳过 ${unsupported} 条非 HTTP(S) 书签` : ''
     ElMessage.success(`${added ? `已导入 ${added} 条书签` : '没有可导入的新书签'}${skipped}`)
+  })
+}
+
+function handleDuplicatesCleared(deletedUrls: string[]) {
+  return run(async () => {
+    const tree = await chrome.bookmarks.getTree()
+    const deletedIds = await cleanupDeletedUrls(deletedUrls, tree)
+    if (deletedIds.length) toggle(deletedIds, false)
+    const { added } = await importBookmarks(tree)
+    if (added > 0) {
+      ElMessage.success(`已补充导入 ${added} 条书签`)
+    }
   })
 }
 
@@ -392,7 +404,7 @@ const dateFormat = new Intl.DateTimeFormat('sv-SE', { year: 'numeric', month: '2
 
   <DuplicateDialog
     v-model="isDuplicateDialogOpen"
-    @cleared="sync"
+    @cleared="handleDuplicatesCleared"
   />
   <DeadLinkDialog
     v-model="isDeadLinkDialogOpen"

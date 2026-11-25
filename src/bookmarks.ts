@@ -107,13 +107,36 @@ export async function changeBookmarks(ids: string[], category?: string) {
   })
 }
 
+export async function cleanupDeletedUrls(urls: string[], tree: chrome.bookmarks.BookmarkTreeNode[]): Promise<string[]> {
+  const candidateUrls = [...new Set(urls.map(url => parseUrl(url)?.href).filter((url): url is string => Boolean(url)))]
+  if (!candidateUrls.length) return []
+
+  const remainingUrls = new Set<string>()
+  const pending = [...tree]
+  while (pending.length) {
+    const node = pending.pop()!
+    for (const child of node.children ?? []) pending.push(child)
+    const parsed = node.url ? parseUrl(node.url)?.href : undefined
+    if (parsed) remainingUrls.add(parsed)
+  }
+
+  const orphanUrls = candidateUrls.filter(url => !remainingUrls.has(url))
+  if (!orphanUrls.length) return []
+
+  const rows = await db.bookmarks.where('url').anyOf(orphanUrls).toArray()
+  if (!rows.length) return []
+  const ids = rows.map(row => row.id)
+  await changeBookmarks(ids)
+  return ids
+}
+
 function hasBookmarks(node: chrome.bookmarks.BookmarkTreeNode): boolean {
   if (node.url) return true
   return (node.children ?? []).some(hasBookmarks)
 }
 
-async function removeBrowserFolders(categories: string[]) {
-  if (!categories.length || typeof chrome === 'undefined' || !chrome.bookmarks) return
+async function removeBrowserFolders(categories: string[], targetFolderIds: Set<string>) {
+  if (!categories.length || !targetFolderIds.size || typeof chrome === 'undefined' || !chrome.bookmarks) return
   const targetNames = new Set(categories)
   let tree: chrome.bookmarks.BookmarkTreeNode[] = []
   try {
@@ -131,7 +154,7 @@ async function removeBrowserFolders(categories: string[]) {
 
     const isFolder = !node.url
     const isRoot = !node.parentId || node.parentId === '0' || ['0', '1', '2', '3'].includes(node.id)
-    if (isFolder && !isRoot && targetNames.has(node.title?.trim()) && !hasBookmarks(node)) {
+    if (isFolder && !isRoot && targetFolderIds.has(node.id) && targetNames.has(node.title?.trim()) && !hasBookmarks(node)) {
       foldersToRemove.push(node)
     }
   }
@@ -168,6 +191,7 @@ export async function deleteBookmarks(ids: string[], includeBrowser: boolean) {
 
   const targets = new Set(rows.map(row => row.url))
   const failedUrls = new Set<string>()
+  const affectedParentIds = new Set<string>()
   let pending: chrome.bookmarks.BookmarkTreeNode[] = []
   try {
     pending = await chrome.bookmarks.getTree()
@@ -187,6 +211,7 @@ export async function deleteBookmarks(ids: string[], includeBrowser: boolean) {
       if (current?.url && parseUrl(current.url)?.href === url) {
         await chrome.bookmarks.remove(node.id)
         browserDeleted++
+        if (current.parentId) affectedParentIds.add(current.parentId)
       }
     } catch {
       failedUrls.add(url)
@@ -219,9 +244,9 @@ export async function deleteBookmarks(ids: string[], includeBrowser: boolean) {
       }
     }
 
-    if (emptyCategories.length) {
+    if (emptyCategories.length && affectedParentIds.size) {
       try {
-        await removeBrowserFolders(emptyCategories)
+        await removeBrowserFolders(emptyCategories, affectedParentIds)
       } catch {
         // 忽略清理浏览器空文件夹异常
       }

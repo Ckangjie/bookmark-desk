@@ -133,7 +133,7 @@ async function recheckSingle(row: LinkCheckItem) {
       }
     }
     if (!res.isBroken) {
-      selectedIds.value.delete(row.id)
+      toggleSelect(row.id, false)
       ElMessage.success(`链接「${row.title}」已恢复正常`)
     } else {
       ElMessage.warning(`重新检测完成：${res.message}`)

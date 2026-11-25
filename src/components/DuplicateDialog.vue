@@ -10,7 +10,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'update:modelValue', value: boolean): void
-  (e: 'cleared'): void
+  (e: 'cleared', deletedUrls: string[]): void
 }>()
 
 const isLoading = ref(false)
@@ -112,9 +112,9 @@ async function confirmDelete() {
 
   isDeleting.value = true
   try {
-    const deletedCount = await deleteDuplicateNodes([...selectedNodeIds.value])
+    const { deletedCount, deletedUrls } = await deleteDuplicateNodes([...selectedNodeIds.value])
     ElMessage.success(`已清理 ${deletedCount} 条重复书签`)
-    emit('cleared')
+    emit('cleared', deletedUrls)
     await scan()
   } catch {
     ElMessage.error('清理重复项失败，请重试')

@@ -99,16 +99,21 @@ export async function scanDuplicateBookmarks(): Promise<DuplicateGroup[]> {
   return duplicates.sort((a, b) => b.items.length - a.items.length)
 }
 
-export async function deleteDuplicateNodes(nodeIds: string[]): Promise<number> {
-  if (typeof chrome === 'undefined' || !chrome.bookmarks || !nodeIds.length) return 0
+export async function deleteDuplicateNodes(nodeIds: string[]): Promise<{ deletedCount: number; deletedUrls: string[] }> {
+  if (typeof chrome === 'undefined' || !chrome.bookmarks || !nodeIds.length) {
+    return { deletedCount: 0, deletedUrls: [] }
+  }
   let deletedCount = 0
+  const deletedUrls: string[] = []
   for (const id of nodeIds) {
     try {
+      const [node] = await chrome.bookmarks.get(id)
       await chrome.bookmarks.remove(id)
       deletedCount++
+      if (node?.url) deletedUrls.push(node.url)
     } catch {
       // 忽略可能已不存在或已被清理的节点
     }
   }
-  return deletedCount
+  return { deletedCount, deletedUrls }
 }
