@@ -166,9 +166,9 @@ async function confirmDelete() {
             <div
               v-for="(group, gIndex) in groups"
               :key="gIndex"
-              class="group-card p-3 rounded border border-gray-200 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-800/40"
+              class="group-card p-3 rounded border border-gray-200 bg-gray-50/50"
             >
-              <div class="group-head flex items-center justify-between gap-2 mb-2 pb-2 border-b border-gray-200/60 dark:border-gray-700/60">
+              <div class="group-head flex items-center justify-between gap-2 mb-2 pb-2 border-b border-gray-200/60">
                 <div class="url-label flex items-center gap-2 min-w-0">
                   <el-icon class="text-blue-500"><Link /></el-icon>
                   <a
@@ -188,7 +188,7 @@ async function confirmDelete() {
                 <div
                   v-for="item in group.items"
                   :key="item.id"
-                  class="item-row flex items-center justify-between gap-3 text-xs p-1.5 rounded hover:bg-gray-100 dark:hover:bg-gray-700/50"
+                  class="item-row flex items-center justify-between gap-3 text-xs p-1.5 rounded hover:bg-gray-100"
                 >
                   <div class="flex items-center gap-2 min-w-0 flex-1">
                     <el-checkbox
@@ -196,10 +196,10 @@ async function confirmDelete() {
                       :disabled="isDeleting"
                       @change="(val: unknown) => toggleItem(item.id, val === true)"
                     />
-                    <span class="item-title truncate font-medium text-gray-800 dark:text-gray-200" :title="item.title">
+                    <span class="item-title truncate font-medium text-gray-800" :title="item.title">
                       {{ item.title }}
                     </span>
-                    <el-tag size="small" type="info" effect="light" class="folder-tag truncate max-w-48">
+                    <el-tag size="small" type="info" effect="light" class="folder-tag max-w-60" :title="item.folderPath">
                       {{ item.folderPath }}
                     </el-tag>
                   </div>
@@ -248,5 +248,10 @@ async function confirmDelete() {
 }
 .url-text {
   color: var(--el-color-primary);
+}
+.folder-tag :deep(.el-tag__content) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>

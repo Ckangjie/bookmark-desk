@@ -59,10 +59,10 @@ export async function queryBookmarks(keyword: string, category: string | null, s
 
 export async function importBookmarks(tree: chrome.bookmarks.BookmarkTreeNode[]) {
   const candidates = new Map<string, Bookmark>()
-  const pending = tree.map(node => ({ node, category: '' })).reverse()
+  const pending = tree.map(node => ({ node, path: [] as string[] })).reverse()
   let unsupported = 0
   while (pending.length) {
-    const { node, category } = pending.pop()!
+    const { node, path } = pending.pop()!
     if (node.url) {
       const url = parseUrl(node.url)
       if (!url) {
@@ -70,11 +70,19 @@ export async function importBookmarks(tree: chrome.bookmarks.BookmarkTreeNode[])
         continue
       }
       if (!candidates.has(url.href)) {
-        candidates.set(url.href, { id: crypto.randomUUID(), title: node.title.trim() || url.hostname, url: url.href, category, createdAt: node.dateAdded ?? Date.now() })
+        candidates.set(url.href, {
+          id: crypto.randomUUID(),
+          title: node.title.trim() || url.hostname,
+          url: url.href,
+          category: path.join(' / '),
+          createdAt: node.dateAdded ?? Date.now(),
+        })
       }
     } else {
+      const folderTitle = node.title?.trim() ?? ''
+      const nextPath = folderTitle ? [...path, folderTitle] : path
       for (let index = (node.children?.length ?? 0) - 1; index >= 0; index--) {
-        pending.push({ node: node.children![index], category: node.title.trim() })
+        pending.push({ node: node.children![index], path: nextPath })
       }
     }
   }
@@ -130,43 +138,33 @@ export async function cleanupDeletedUrls(urls: string[], tree: chrome.bookmarks.
   return ids
 }
 
-function hasBookmarks(node: chrome.bookmarks.BookmarkTreeNode): boolean {
-  if (node.url) return true
-  return (node.children ?? []).some(hasBookmarks)
+function isRootBookmarkFolder(node: chrome.bookmarks.BookmarkTreeNode): boolean {
+  return !node.parentId || node.parentId === '0' || ['0', '1', '2', '3'].includes(node.id)
 }
 
-async function removeBrowserFolders(categories: string[], targetFolderIds: Set<string>) {
-  if (!categories.length || !targetFolderIds.size || typeof chrome === 'undefined' || !chrome.bookmarks) return
-  const targetNames = new Set(categories)
-  let tree: chrome.bookmarks.BookmarkTreeNode[] = []
-  try {
-    tree = await chrome.bookmarks.getTree()
-  } catch {
-    return
-  }
+async function removeBrowserFolders(targetFolderIds: Set<string>) {
+  if (!targetFolderIds.size || typeof chrome === 'undefined' || !chrome.bookmarks) return
 
-  const foldersToRemove: chrome.bookmarks.BookmarkTreeNode[] = []
-  const pending = [...tree]
+  // 从受影响的直接父文件夹逐级向上清理空文件夹（支持多层嵌套）
+  const checkedIds = new Set<string>()
+  for (const startId of targetFolderIds) {
+    let currentId: string | undefined = startId
+    while (currentId && !checkedIds.has(currentId)) {
+      checkedIds.add(currentId)
+      try {
+        const [folder] = await chrome.bookmarks.getSubTree(currentId)
+        if (!folder || folder.url || isRootBookmarkFolder(folder)) break
+        if ((folder.children?.length ?? 0) > 0) break
 
-  while (pending.length) {
-    const node = pending.pop()!
-    for (const child of node.children ?? []) pending.push(child)
-
-    const isFolder = !node.url
-    const isRoot = !node.parentId || node.parentId === '0' || ['0', '1', '2', '3'].includes(node.id)
-    if (isFolder && !isRoot && targetFolderIds.has(node.id) && targetNames.has(node.title?.trim()) && !hasBookmarks(node)) {
-      foldersToRemove.push(node)
-    }
-  }
-
-  for (const folder of foldersToRemove) {
-    try {
-      const [current] = await chrome.bookmarks.get(folder.id)
-      if (current) {
-        await chrome.bookmarks.removeTree(folder.id)
+        const parentId = folder.parentId
+        await chrome.bookmarks.remove(folder.id)
+        // 删除当前空文件夹后，父文件夹可能也变空，从已检查集合中移除以继续向上验证
+        if (parentId) checkedIds.delete(parentId)
+        currentId = parentId
+      } catch {
+        // 忽略已被级联删除或不存在的节点
+        break
       }
-    } catch {
-      // 忽略已被级联删除或不存在的节点
     }
   }
 }
@@ -223,30 +221,9 @@ export async function deleteBookmarks(ids: string[], includeBrowser: boolean) {
   try {
     const localDeleted = await changeBookmarks(localIds)
 
-    const affectedCategories = [
-      ...new Set(
-        rows
-          .filter(row => !failedUrls.has(row.url))
-          .map(row => row.category?.trim())
-          .filter((name): name is string => Boolean(name))
-      ),
-    ]
-
-    const emptyCategories: string[] = []
-    for (const cat of affectedCategories) {
+    if (affectedParentIds.size) {
       try {
-        const hasRemaining = await db.bookmarks.where('category').equals(cat).first()
-        if (!hasRemaining) {
-          emptyCategories.push(cat)
-        }
-      } catch {
-        // 忽略单项查询异常
-      }
-    }
-
-    if (emptyCategories.length && affectedParentIds.size) {
-      try {
-        await removeBrowserFolders(emptyCategories, affectedParentIds)
+        await removeBrowserFolders(affectedParentIds)
       } catch {
         // 忽略清理浏览器空文件夹异常
       }

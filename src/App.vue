@@ -280,7 +280,7 @@ const dateFormat = new Intl.DateTimeFormat('sv-SE', { year: 'numeric', month: '2
       </label>
       <label class="filter-select">
         <span>分类</span>
-        <el-select v-model="category" placeholder="全部分类" clearable :value-on-clear="null" aria-label="分类">
+        <el-select v-model="category" placeholder="全部分类" clearable filterable :value-on-clear="null" aria-label="分类">
           <el-option label="全部分类" :value="null" />
           <el-option label="未归类" value="" />
           <el-option v-for="name in categories" :key="name" :label="name" :value="name" />
@@ -338,8 +338,8 @@ const dateFormat = new Intl.DateTimeFormat('sv-SE', { year: 'numeric', month: '2
             <span class="url"><template v-for="(part, index) in highlight(row.url)" :key="index"><mark v-if="part.match">{{ part.value }}</mark><template v-else>{{ part.value }}</template></template></span>
           </template>
         </el-table-column>
-        <el-table-column label="分类" width="145" show-overflow-tooltip>
-          <template #default="{ row }"><el-tag :type="row.category ? 'primary' : 'info'" effect="plain" size="small">{{ categoryLabel(row.category) }}</el-tag></template>
+        <el-table-column label="分类" width="165" show-overflow-tooltip>
+          <template #default="{ row }"><el-tag class="category-tag" :type="row.category ? 'primary' : 'info'" effect="plain" size="small">{{ categoryLabel(row.category) }}</el-tag></template>
         </el-table-column>
         <el-table-column label="收藏时间" width="155">
           <template #default="{ row }"><time class="time">{{ dateFormat.format(row.createdAt) }}</time></template>

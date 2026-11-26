@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { CircleClose, Delete, Refresh, Search, TopRight, VideoPause, VideoPlay, Warning } from '@element-plus/icons-vue'
+import { CircleClose, Delete, Refresh, TopRight, VideoPause, VideoPlay } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import type { Bookmark } from '../bookmarks'
 import { checkBookmarkList, checkSingleUrl, type LinkCheckItem } from '../utils/linkChecker'
@@ -20,6 +20,7 @@ const isChecking = ref(false)
 const checkedCount = ref(0)
 const results = ref<LinkCheckItem[]>([])
 const selectedIds = ref(new Set<string>())
+const recheckingIds = ref(new Set<string>())
 const shouldShowOnlyBroken = ref(true)
 const abortController = ref<AbortController | null>(null)
 
@@ -53,6 +54,7 @@ function resetState() {
   checkedCount.value = 0
   results.value = []
   selectedIds.value = new Set()
+  recheckingIds.value = new Set()
   shouldShowOnlyBroken.value = true
 }
 
@@ -76,23 +78,26 @@ async function startCheck() {
   abortController.value = controller
 
   try {
-    const finalResults = await checkBookmarkList(
+    await checkBookmarkList(
       props.bookmarks,
       6,
-      (_item, count) => {
+      (item, count) => {
+        if (abortController.value !== controller || controller.signal.aborted) return
         checkedCount.value = count
+        results.value.push(item)
+        if (item.isBroken) {
+          toggleSelect(item.id, true)
+        }
       },
       controller.signal
     )
-    results.value = finalResults
-    // 默认自动全选检测出的失效项
-    const brokenIds = new Set(finalResults.filter(r => r.isBroken).map(r => r.id))
-    selectedIds.value = brokenIds
   } catch {
     ElMessage.error('排查过程发生异常')
   } finally {
     isChecking.value = false
-    abortController.value = null
+    if (abortController.value === controller) {
+      abortController.value = null
+    }
   }
 }
 
@@ -119,6 +124,10 @@ function toggleSelectAll(isChecked: boolean) {
 }
 
 async function recheckSingle(row: LinkCheckItem) {
+  if (recheckingIds.value.has(row.id)) return
+  const nextRechecking = new Set(recheckingIds.value)
+  nextRechecking.add(row.id)
+  recheckingIds.value = nextRechecking
   try {
     const res = await checkSingleUrl(row.url)
     const index = results.value.findIndex(item => item.id === row.id)
@@ -140,6 +149,10 @@ async function recheckSingle(row: LinkCheckItem) {
     }
   } catch {
     ElMessage.error('重测失败')
+  } finally {
+    const updatedRechecking = new Set(recheckingIds.value)
+    updatedRechecking.delete(row.id)
+    recheckingIds.value = updatedRechecking
   }
 }
 
@@ -161,7 +174,7 @@ function handleDeleteSelected() {
     @update:model-value="(val: boolean) => emit('update:modelValue', val)"
   >
     <div class="deadlink-panel space-y-4">
-      <div class="control-bar flex flex-wrap items-center justify-between gap-3 p-3 bg-gray-50/70 dark:bg-gray-800/40 rounded border border-gray-200/70 dark:border-gray-700/70">
+      <div class="control-bar flex flex-wrap items-center justify-between gap-3 p-3 bg-gray-50/70 rounded border border-gray-200/70">
         <div class="flex flex-wrap items-center gap-3">
           <el-button
             v-if="!isChecking"
@@ -265,9 +278,9 @@ function handleDeleteSelected() {
           </template>
         </el-table-column>
 
-        <el-table-column label="分类" width="120" show-overflow-tooltip>
+        <el-table-column label="分类" width="140" show-overflow-tooltip>
           <template #default="{ row }">
-            <el-tag size="small" type="info" effect="plain">{{ row.category || '未归类' }}</el-tag>
+            <el-tag class="category-tag" size="small" type="info" effect="plain">{{ row.category || '未归类' }}</el-tag>
           </template>
         </el-table-column>
 
@@ -311,7 +324,8 @@ function handleDeleteSelected() {
               <el-button
                 link
                 size="small"
-                :disabled="isChecking"
+                :loading="recheckingIds.has(row.id)"
+                :disabled="isChecking || recheckingIds.has(row.id)"
                 @click="recheckSingle(row)"
               >
                 重测

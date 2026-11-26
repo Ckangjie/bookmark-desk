@@ -12,37 +12,52 @@ export interface LinkCheckItem {
   checkedAt: number
 }
 
-export async function checkSingleUrl(url: string, timeoutMs = 6000): Promise<{ status?: number; message: string; isBroken: boolean; isTimeout: boolean }> {
-  const controller = new AbortController()
-  const timerId = setTimeout(() => controller.abort(), timeoutMs)
+const HEAD_FALLBACK_STATUSES = new Set([400, 403, 405, 501])
 
+async function fetchWithTimeout(
+  url: string,
+  method: 'HEAD' | 'GET',
+  timeoutMs: number,
+  outerSignal?: AbortSignal
+): Promise<Response> {
+  const controller = new AbortController()
+  const onOuterAbort = () => controller.abort()
+  if (outerSignal?.aborted) {
+    controller.abort()
+  } else {
+    outerSignal?.addEventListener('abort', onOuterAbort, { once: true })
+  }
+
+  const timerId = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    return await fetch(url, {
+      method,
+      signal: controller.signal,
+      redirect: 'follow',
+    })
+  } finally {
+    clearTimeout(timerId)
+    outerSignal?.removeEventListener('abort', onOuterAbort)
+  }
+}
+
+export async function checkSingleUrl(
+  url: string,
+  timeoutMs = 6000,
+  outerSignal?: AbortSignal
+): Promise<{ status?: number; message: string; isBroken: boolean; isTimeout: boolean }> {
   try {
     let response: Response
     try {
-      response = await fetch(url, {
-        method: 'HEAD',
-        signal: controller.signal,
-        redirect: 'follow',
-      })
-      if (response.status === 405 || response.status === 400) {
-        response = await fetch(url, {
-          method: 'GET',
-          signal: controller.signal,
-          redirect: 'follow',
-        })
+      response = await fetchWithTimeout(url, 'HEAD', timeoutMs, outerSignal)
+      if (HEAD_FALLBACK_STATUSES.has(response.status)) {
+        response = await fetchWithTimeout(url, 'GET', timeoutMs, outerSignal)
       }
     } catch (innerError) {
-      if (controller.signal.aborted) {
-        return { message: '请求超时', isBroken: true, isTimeout: true }
-      }
-      response = await fetch(url, {
-        method: 'GET',
-        signal: controller.signal,
-        redirect: 'follow',
-      })
+      if (outerSignal?.aborted) throw innerError
+      response = await fetchWithTimeout(url, 'GET', timeoutMs, outerSignal)
     }
 
-    clearTimeout(timerId)
     const isSuccess = response.status >= 200 && response.status < 400
     return {
       status: response.status,
@@ -51,12 +66,14 @@ export async function checkSingleUrl(url: string, timeoutMs = 6000): Promise<{ s
       isTimeout: false,
     }
   } catch (error) {
-    clearTimeout(timerId)
-    const isAborted = controller.signal.aborted
+    if (outerSignal?.aborted) {
+      return { message: '已取消', isBroken: false, isTimeout: false }
+    }
+    const isTimeout = error instanceof DOMException && error.name === 'AbortError'
     return {
-      message: isAborted ? '请求超时' : (error instanceof Error ? error.message : '连接失败'),
+      message: isTimeout ? '请求超时' : (error instanceof Error ? error.message : '连接失败'),
       isBroken: true,
-      isTimeout: isAborted,
+      isTimeout,
     }
   }
 }
@@ -85,7 +102,7 @@ export async function checkBookmarkList(
         isTimeout: false,
       }
       try {
-        checkResult = await checkSingleUrl(bookmark.url)
+        checkResult = await checkSingleUrl(bookmark.url, 6000, abortSignal)
       } catch (error) {
         checkResult = {
           status: undefined,
@@ -94,6 +111,8 @@ export async function checkBookmarkList(
           isTimeout: false,
         }
       }
+
+      if (abortSignal?.aborted) break
 
       const item: LinkCheckItem = {
         id: bookmark.id,
