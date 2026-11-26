@@ -1,11 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { CircleCheck, Collection, CopyDocument, Delete, Download, Link, Search, TopRight } from '@element-plus/icons-vue'
+import { CircleCheck, Collection, Delete, Download, Link, Search, TopRight } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import { liveQuery } from 'dexie'
-import { changeBookmarks, cleanupDeletedUrls, deleteBookmarks, getAllBookmarks, importBookmarks, queryBookmarks, type Bookmark, type Sort } from './bookmarks'
-import DuplicateDialog from './components/DuplicateDialog.vue'
+import { changeBookmarks, deleteBookmarks, getAllBookmarks, importBookmarks, queryBookmarks, type Bookmark, type Sort } from './bookmarks'
 import DeadLinkDialog from './components/DeadLinkDialog.vue'
 
 const keyword = ref('')
@@ -28,7 +27,6 @@ const deleteBrowserOriginals = ref(false)
 const savingDeleteSetting = ref(false)
 const deleteDialog = reactive({ open: false, ids: [] as string[], includeBrowser: false })
 const moveDialog = reactive({ open: false, ids: [] as string[], category: null as string | null })
-const isDuplicateDialogOpen = ref(false)
 const isDeadLinkDialogOpen = ref(false)
 const allBookmarks = ref<Bookmark[]>([])
 
@@ -163,18 +161,6 @@ function sync() {
   })
 }
 
-function handleDuplicatesCleared(deletedUrls: string[]) {
-  return run(async () => {
-    const tree = await chrome.bookmarks.getTree()
-    const deletedIds = await cleanupDeletedUrls(deletedUrls, tree)
-    if (deletedIds.length) toggle(deletedIds, false)
-    const { added } = await importBookmarks(tree)
-    if (added > 0) {
-      ElMessage.success(`已补充导入 ${added} 条书签`)
-    }
-  })
-}
-
 function openDeleteDialog(ids: string[]) {
   deleteDialog.ids = ids
   deleteDialog.includeBrowser = deleteBrowserOriginals.value
@@ -238,11 +224,12 @@ function highlight(value: string) {
   return parts
 }
 
+const messageConfig = { grouping: true, max: 3 }
 const dateFormat = new Intl.DateTimeFormat('sv-SE', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
 </script>
 
 <template>
-  <el-config-provider :locale="zhCn">
+  <el-config-provider :locale="zhCn" :message="messageConfig">
   <header class="app-header">
     <div class="brand flex items-center gap-3">
       <span class="brand-icon"><el-icon :size="19"><Collection /></el-icon></span>
@@ -296,7 +283,6 @@ const dateFormat = new Intl.DateTimeFormat('sv-SE', { year: 'numeric', month: '2
           <span class="count">{{ count.toLocaleString() }} 条</span>
         </div>
         <div class="flex flex-wrap items-center gap-2">
-          <el-button :icon="CopyDocument" :disabled="busy" @click="isDuplicateDialogOpen = true">重复检测</el-button>
           <el-button :icon="CircleCheck" :disabled="busy || !total" @click="openDeadLinkDialog">失效排查</el-button>
           <el-button v-if="selected.size" text @click="selected = new Set()">清空选择</el-button>
           <el-select v-model="sort" class="sort-select" aria-label="收藏时间排序">
@@ -402,10 +388,6 @@ const dateFormat = new Intl.DateTimeFormat('sv-SE', { year: 'numeric', month: '2
     </template>
   </el-dialog>
 
-  <DuplicateDialog
-    v-model="isDuplicateDialogOpen"
-    @cleared="handleDuplicatesCleared"
-  />
   <DeadLinkDialog
     v-model="isDeadLinkDialogOpen"
     :bookmarks="allBookmarks"

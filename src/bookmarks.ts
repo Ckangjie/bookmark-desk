@@ -115,29 +115,6 @@ export async function changeBookmarks(ids: string[], category?: string) {
   })
 }
 
-export async function cleanupDeletedUrls(urls: string[], tree: chrome.bookmarks.BookmarkTreeNode[]): Promise<string[]> {
-  const candidateUrls = [...new Set(urls.map(url => parseUrl(url)?.href).filter((url): url is string => Boolean(url)))]
-  if (!candidateUrls.length) return []
-
-  const remainingUrls = new Set<string>()
-  const pending = [...tree]
-  while (pending.length) {
-    const node = pending.pop()!
-    for (const child of node.children ?? []) pending.push(child)
-    const parsed = node.url ? parseUrl(node.url)?.href : undefined
-    if (parsed) remainingUrls.add(parsed)
-  }
-
-  const orphanUrls = candidateUrls.filter(url => !remainingUrls.has(url))
-  if (!orphanUrls.length) return []
-
-  const rows = await db.bookmarks.where('url').anyOf(orphanUrls).toArray()
-  if (!rows.length) return []
-  const ids = rows.map(row => row.id)
-  await changeBookmarks(ids)
-  return ids
-}
-
 function isRootBookmarkFolder(node: chrome.bookmarks.BookmarkTreeNode): boolean {
   return !node.parentId || node.parentId === '0' || ['0', '1', '2', '3'].includes(node.id)
 }
@@ -152,11 +129,12 @@ async function removeBrowserFolders(targetFolderIds: Set<string>) {
     while (currentId && !checkedIds.has(currentId)) {
       checkedIds.add(currentId)
       try {
-        const [folder] = await chrome.bookmarks.getSubTree(currentId)
+        const subTree: chrome.bookmarks.BookmarkTreeNode[] = await chrome.bookmarks.getSubTree(currentId)
+        const folder = subTree[0]
         if (!folder || folder.url || isRootBookmarkFolder(folder)) break
         if ((folder.children?.length ?? 0) > 0) break
 
-        const parentId = folder.parentId
+        const parentId: string | undefined = folder.parentId
         await chrome.bookmarks.remove(folder.id)
         // 删除当前空文件夹后，父文件夹可能也变空，从已检查集合中移除以继续向上验证
         if (parentId) checkedIds.delete(parentId)
